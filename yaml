@@ -1,0 +1,85 @@
+trigger:
+  - main
+
+pool:
+  vmImage: "ubuntu-latest"
+
+variables:
+  dockerImage: "minhaaplicacao"
+  registry: "meuregistro.azurecr.io"
+  tag: "$(Build.BuildId)"
+
+stages:
+  # -----------------------
+  # ETAPA 1: BUILD
+  # -----------------------
+  - stage: Build
+    displayName: "Build da Aplicação"
+    jobs:
+      - job: Build
+        steps:
+          - task: UseDotNet@2
+            inputs:
+              packageType: "sdk"
+              version: "8.0.x"
+
+          - script: dotnet restore
+            displayName: "Restaurar dependências"
+
+          - script: dotnet build --configuration Release
+            displayName: "Compilar código"
+
+          - script: dotnet publish -c Release -o out
+            displayName: "Gerar artefatos"
+
+          - task: Docker@2
+            displayName: "Build da imagem Docker"
+            inputs:
+              command: build
+              repository: $(registry)/$(dockerImage)
+              tags: |
+                $(tag)
+
+  # -----------------------
+  # ETAPA 2: TESTES
+  # -----------------------
+  - stage: Test
+    displayName: "Testes Automatizados"
+    dependsOn: Build
+    jobs:
+      - job: RunTests
+        steps:
+          - task: DotNetCoreCLI@2
+            inputs:
+              command: "test"
+              projects: "**/*Tests.csproj"
+              arguments: "--configuration Release"
+
+  # -----------------------
+  # ETAPA 3: DEPLOY
+  # -----------------------
+  - stage: Deploy
+    displayName: "Deploy Automático"
+    dependsOn: Test
+    jobs:
+      - deployment: Staging
+        displayName: "Deploy em Staging"
+        environment: "staging"
+        strategy:
+          runOnce:
+            deploy:
+              steps:
+                - script: echo "Realizando deploy em Staging..."
+                - script: docker run -d -p 8080:8080 $(registry)/$(dockerImage):$(tag)
+
+      - deployment: Production
+        displayName: "Deploy em Produção"
+        environment: "production"
+        dependsOn: Staging
+        condition: succeeded()
+        strategy:
+          runOnce:
+            deploy:
+              steps:
+                - script: echo "Realizando deploy em Produção..."
+                - script: docker run -d -p 80:8080 $(registry)/$(dockerImage):$(tag)
